@@ -1,0 +1,47 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+    <PropertyGroup>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <Platforms>x64</Platforms>
+        <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+        <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+        <Version>0.3.3.0</Version>
+
+        <!--
+          Manifest metadata lives here, not in a hand-written .json. The Dalamud.NET.Sdk
+          generates the manifest at build time and stamps the correct DalamudApiLevel from
+          the SDK you build against; a hardcoded level in a .json is the usual cause of a
+          false "outdated and incompatible" banner. Author is singular; Tags and
+          CategoryTags are semicolon-separated; AssemblyVersion is the reported version.
+        -->
+        <Name>HMoniker</Name>
+        <InternalName>HMoniker</InternalName>
+        <Author>The Enceladeum</Author>
+        <AssemblyVersion>0.3.3.0</AssemblyVersion>
+        <Punchline>Like Honorific, but for names.</Punchline>
+        <Description>Changes your display name. Local only: visible only to yourself outside of HMS (HMapSync) sessions.</Description>
+        <RepoUrl>https://github.com/Enceladeum/HMoniker</RepoUrl>
+        <Tags>rp;roleplay;nameplate;name;garlean</Tags>
+        <CategoryTags>other</CategoryTags>
+
+        <!--
+          IconUrl gives the INSTALLED plugin its icon (Dalamud downloads it for
+          repo-installed plugins). No icon exists yet: add images/icon.png to the repo at
+          this path before publish or the installed plugin shows a "?" placeholder. Keep
+          it identical to repo.json's IconUrl.
+        -->
+        <IconUrl>https://raw.githubusercontent.com/Enceladeum/HMoniker/main/images/icon.png</IconUrl>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!--
+          Dev-load icon: copied next to the DLL so a LOCAL dev build shows its icon. The
+          Exists() guard keeps the build green until images/icon.png is added. This does
+          NOT put the icon in latest.zip (DalamudPackager strips it); the installed icon
+          comes from IconUrl above.
+        -->
+        <None Include="images\icon.png" CopyToOutputDirectory="PreserveNewest" Condition="Exists('images\icon.png')" />
+    </ItemGroup>
+</Project>
