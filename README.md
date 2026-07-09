@@ -27,8 +27,11 @@ Open with `/hmoniker`, then:
 2. Paste this URL into a new row, click the **+**, then **Save**:
 
    ```
-   https://raw.githubusercontent.com/Enceladeum/HMoniker/main/repo.json
+   https://raw.githubusercontent.com/Enceladeum/DalamudPlugins/main/repo.json
    ```
+
+   This one URL is The Enceladeum's shared feed: it lists **every** plugin by this
+   author (and any added later), so there's nothing else to track down.
 3. Open the plugin installer (`/xlplugins`), search for **HMoniker**, and click
    **Install**.
 
