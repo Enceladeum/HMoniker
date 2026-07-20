@@ -7,7 +7,7 @@
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-        <Version>1.0.0.0</Version>
+        <Version>1.1.0.0</Version>
 
         <!--
           Manifest metadata lives here, not in a hand-written .json. The Dalamud.NET.Sdk
@@ -19,7 +19,7 @@
         <Name>HMoniker</Name>
         <InternalName>HMoniker</InternalName>
         <Author>The Enceladeum</Author>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <AssemblyVersion>1.1.0.0</AssemblyVersion>
         <Punchline>Like Honorific, but for names.</Punchline>
         <Description>Changes your display name. Local only: visible only to yourself outside of HMS (HMapSync) sessions.</Description>
         <RepoUrl>https://github.com/Enceladeum/HMoniker</RepoUrl>

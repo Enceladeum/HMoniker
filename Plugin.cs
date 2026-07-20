@@ -22,6 +22,12 @@ public sealed class Plugin : IDalamudPlugin
     private readonly WindowSystem windowSystem = new("HMoniker");
     private readonly ConfigWindow configWindow;
 
+    // External local-name override (e.g. HOutfits applying an NPC name). We snapshot
+    // the user's own prior config so a later ClearLocalName is non-destructive.
+    private MonikerCharacterConfig? extNameBackup;
+    private bool extNameCreatedConfig;
+    private bool extNameActive;
+
     private const string CommandName = "/hmoniker";
 
     public Plugin(
@@ -94,6 +100,103 @@ public sealed class Plugin : IDalamudPlugin
         name = cc.Compose();
         hideFcTag = cc.HideFcTag;
         return true;
+    }
+
+    // Set the LOCAL player's own displayed name via the config path (not the peer-
+    // override dictionary, which the host-invariant guard ignores for the local player).
+    // Used by cooperating local plugins such as HOutfits applying an NPC name. The raw
+    // string is split into slots the SAME way a real name is seeded, so an externally-
+    // applied name and a manually-entered one slot identically. Returns false only if the
+    // local player is unavailable.
+    public bool SetLocalName(string name)
+    {
+        var local = Objects.LocalPlayer;
+        if (local == null) return false;
+
+        var realName = local.Name.TextValue;
+        var world = local.HomeWorld.ValueNullable?.Name.ToString() ?? string.Empty;
+
+        if (!Config.TryGetCharacterConfig(realName, world, out var cc) || cc == null)
+        {
+            cc = new MonikerCharacterConfig { CharacterName = realName, World = world };
+            Config.Characters.Add(cc);
+            if (!extNameActive)
+            {
+                extNameCreatedConfig = true;
+                extNameBackup = null;
+            }
+        }
+        else if (!extNameActive)
+        {
+            // First external override on top of a user's own config: snapshot it so a
+            // later Clear restores the user's name rather than destroying it.
+            extNameCreatedConfig = false;
+            extNameBackup = Clone(cc);
+        }
+
+        var trimmed = (name ?? string.Empty).Trim();
+        var idx = trimmed.IndexOf(' ');
+        cc.Prefix = string.Empty;
+        cc.MiddleName = string.Empty;
+        cc.Suffix = string.Empty;
+        cc.FirstName = idx < 0 ? trimmed : trimmed[..idx];
+        cc.LastName = idx < 0 ? string.Empty : trimmed[(idx + 1)..];
+        // HideFcTag deliberately left untouched: a newly created config defaults to false
+        // (tag shown); an existing config keeps the user's own setting.
+
+        extNameActive = true;
+        SaveConfig();
+        Ipc?.ReportLocalChanged();
+        RequestNameplateRedraw();
+        return true;
+    }
+
+    // Revert an external local-name override: restore the user's own prior name, or
+    // remove the entry entirely if the override created it -> back to the real name.
+    public void ClearLocalName()
+    {
+        var local = Objects.LocalPlayer;
+        if (local != null)
+        {
+            var realName = local.Name.TextValue;
+            var world = local.HomeWorld.ValueNullable?.Name.ToString() ?? string.Empty;
+            if (Config.TryGetCharacterConfig(realName, world, out var cc) && cc != null)
+            {
+                if (extNameCreatedConfig)
+                    Config.Characters.Remove(cc);
+                else if (extNameBackup != null)
+                    RestoreInto(cc, extNameBackup);
+            }
+        }
+
+        extNameActive = false;
+        extNameCreatedConfig = false;
+        extNameBackup = null;
+        SaveConfig();
+        Ipc?.ReportLocalChanged();
+        RequestNameplateRedraw();
+    }
+
+    private static MonikerCharacterConfig Clone(MonikerCharacterConfig c) => new()
+    {
+        CharacterName = c.CharacterName,
+        World = c.World,
+        Prefix = c.Prefix,
+        FirstName = c.FirstName,
+        MiddleName = c.MiddleName,
+        LastName = c.LastName,
+        Suffix = c.Suffix,
+        HideFcTag = c.HideFcTag,
+    };
+
+    private static void RestoreInto(MonikerCharacterConfig target, MonikerCharacterConfig src)
+    {
+        target.Prefix = src.Prefix;
+        target.FirstName = src.FirstName;
+        target.MiddleName = src.MiddleName;
+        target.LastName = src.LastName;
+        target.Suffix = src.Suffix;
+        target.HideFcTag = src.HideFcTag;
     }
 
     public void Dispose()

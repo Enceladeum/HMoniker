@@ -18,7 +18,7 @@ public class NameData
 public class IpcProvider : IDisposable
 {
     public const uint MajorVersion = 2;
-    public const uint MinorVersion = 0;
+    public const uint MinorVersion = 1;
 
     // Wire name kept as "Moniker" on purpose: it is the cross-plugin IPC contract
     // HMapSync already calls. Renaming it to match the plugin would silently break that
@@ -36,6 +36,8 @@ public class IpcProvider : IDisposable
     private ICallGateProvider<string, object>? localCharacterNameChanged;
     private ICallGateProvider<object>? ready;
     private ICallGateProvider<object>? disposing;
+    private ICallGateProvider<string, bool>? setLocalName;
+    private ICallGateProvider<object>? clearLocalName;
 
     public IpcProvider(IDalamudPluginInterface pi, Plugin plugin)
     {
@@ -85,6 +87,16 @@ public class IpcProvider : IDisposable
             if (obj is IPlayerCharacter pc) IpcAssignedNames.Remove(pc.EntityId);
         });
 
+        // Local-player name set by a cooperating local plugin (e.g. HOutfits applying an
+        // NPC name to the user themselves). Writes the local player's own config, NOT the
+        // IpcAssignedNames dictionary (which is ignored for the local player by the
+        // host-invariant guard). Legitimate because it is the user's own explicit action.
+        setLocalName = pi.GetIpcProvider<string, bool>($"{NameSpace}.SetLocalName");
+        setLocalName.RegisterFunc(name => plugin.SetLocalName(name));
+
+        clearLocalName = pi.GetIpcProvider<object>($"{NameSpace}.ClearLocalName");
+        clearLocalName.RegisterAction(() => plugin.ClearLocalName());
+
         localCharacterNameChanged = pi.GetIpcProvider<string, object>($"{NameSpace}.LocalCharacterNameChanged");
         ready = pi.GetIpcProvider<object>($"{NameSpace}.Ready");
         disposing = pi.GetIpcProvider<object>($"{NameSpace}.Disposing");
@@ -118,6 +130,8 @@ public class IpcProvider : IDisposable
         getLocalCharacterName?.UnregisterFunc();
         setCharacterName?.UnregisterAction();
         clearCharacterName?.UnregisterAction();
+        setLocalName?.UnregisterFunc();
+        clearLocalName?.UnregisterAction();
         IpcAssignedNames.Clear();
     }
 }
