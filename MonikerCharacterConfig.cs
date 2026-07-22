@@ -17,6 +17,7 @@ public class MonikerCharacterConfig
     public string Suffix = string.Empty;
 
     public bool HideFcTag;
+    public bool HideName;
 
     // Assemble the nameplate name from the non-empty slots.
     public string Compose()

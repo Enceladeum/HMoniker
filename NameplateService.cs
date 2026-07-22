@@ -24,9 +24,14 @@ public sealed class NameplateService : IDisposable
         foreach (var handler in handlers)
         {
             if (handler.PlayerCharacter is not { } pc) continue;
-            if (!plugin.TryGetActiveName(pc, out var name, out var hideFc)) continue;
+            if (!plugin.TryGetActiveName(pc, out var name, out var hideFc, out var hideName)) continue;
 
-            if (!string.IsNullOrWhiteSpace(name))
+            // Hide name wins over any composed override: blank the plate name outright.
+            if (hideName)
+            {
+                handler.Name = string.Empty;
+            }
+            else if (!string.IsNullOrWhiteSpace(name))
             {
                 var real = pc.Name.TextValue;
                 if (name != real) handler.Name = name;

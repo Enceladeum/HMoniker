@@ -5,9 +5,10 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 
-// Row per selected character: [Prefix] [First] [Middle] [Last] [Suffix] [Hide FC tag],
-// all free text. Edits are staged in a draft and only take effect on Apply; Reset
-// returns the fields to the real character name. First/Last seeded from the real name.
+// Row per selected character: [Prefix] [First] [Middle] [Last] [Suffix] on one line,
+// then [Hide FC tag] [Hide name] toggles below, all free text. Edits are staged in a
+// draft and only take effect on Apply; Reset returns the fields to the real character
+// name. First/Last seeded from the real name.
 public sealed class ConfigWindow : Window
 {
     private readonly Plugin plugin;
@@ -70,7 +71,7 @@ public sealed class ConfigWindow : Window
         ImGui.TextDisabled(string.IsNullOrEmpty(c.World) ? c.CharacterName : $"{c.CharacterName}  -  {c.World}");
         ImGui.Spacing();
 
-        // [Prefix] [First] [Middle] [Last] [Suffix] [Hide FC tag]
+        // Row 1: [Prefix] [First] [Middle] [Last] [Suffix]
         ImGui.SetNextItemWidth(68);
         ImGui.InputTextWithHint("##prefix", "Prefix", ref draft.Prefix, 32);
         ImGui.SameLine();
@@ -85,12 +86,20 @@ public sealed class ConfigWindow : Window
         ImGui.SameLine();
         ImGui.SetNextItemWidth(68);
         ImGui.InputTextWithHint("##suffix", "Suffix", ref draft.Suffix, 32);
-        ImGui.SameLine();
+
+        // Row 2: toggles. "Hide name" blanks the plate name entirely; it wins over the
+        // slots above, so the preview shows "(hidden)" when it is on.
+        ImGui.Spacing();
         ImGui.Checkbox("Hide FC tag", ref draft.HideFcTag);
+        ImGui.SameLine();
+        ImGui.Checkbox("Hide name", ref draft.HideName);
 
         ImGui.Spacing();
         var composed = draft.Compose();
-        ImGui.TextDisabled($"Preview:  {(string.IsNullOrWhiteSpace(composed) ? "(unchanged)" : composed)}");
+        var preview = draft.HideName
+            ? "(hidden)"
+            : string.IsNullOrWhiteSpace(composed) ? "(unchanged)" : composed;
+        ImGui.TextDisabled($"Preview:  {preview}");
 
         ImGui.Spacing();
         if (ImGui.Button("Apply"))
@@ -132,6 +141,7 @@ public sealed class ConfigWindow : Window
         draft.LastName = c.LastName;
         draft.Suffix = c.Suffix;
         draft.HideFcTag = c.HideFcTag;
+        draft.HideName = c.HideName;
     }
 
     private void CommitDraft(MonikerCharacterConfig c)
@@ -142,6 +152,7 @@ public sealed class ConfigWindow : Window
         c.LastName = draft.LastName;
         c.Suffix = draft.Suffix;
         c.HideFcTag = draft.HideFcTag;
+        c.HideName = draft.HideName;
     }
 
     private void ResetDraftToRealName()
@@ -154,6 +165,7 @@ public sealed class ConfigWindow : Window
         draft.FirstName = idx < 0 ? full : full[..idx];
         draft.LastName = idx < 0 ? string.Empty : full[(idx + 1)..];
         draft.HideFcTag = false;
+        draft.HideName = false;
     }
 
     private void AddLocal()

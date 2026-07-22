@@ -7,18 +7,22 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Ipc;
 using Newtonsoft.Json;
 
-// Carried over IPC: the composed name string + FC-tag flag. A courier (HMS relay)
-// computes a peer's name and applies it via SetCharacterName; the receiver renders.
+// Carried over IPC: the composed name string + FC-tag flag + hide-name flag. A courier
+// (HMS relay) computes a peer's name and applies it via SetCharacterName; the receiver
+// renders. HideName is an additive field (IPC 2.2): older peers that deserialize this
+// JSON simply ignore it, and JSON from an older sender leaves it false. So a peer who
+// hides their own name has it blanked for everyone running a build new enough to read it.
 public class NameData
 {
     public string Name = string.Empty;
     public bool HideFcTag;
+    public bool HideName;
 }
 
 public class IpcProvider : IDisposable
 {
     public const uint MajorVersion = 2;
-    public const uint MinorVersion = 1;
+    public const uint MinorVersion = 2;
 
     // Wire name kept as "Moniker" on purpose: it is the cross-plugin IPC contract
     // HMapSync already calls. Renaming it to match the plugin would silently break that
@@ -106,9 +110,9 @@ public class IpcProvider : IDisposable
     {
         var local = plugin.Objects.LocalPlayer;
         if (local == null || !plugin.Config.Enabled) return string.Empty;
-        if (!plugin.TryGetActiveName(local, out var name, out var hideFc)) return string.Empty;
-        if (string.IsNullOrWhiteSpace(name) && !hideFc) return string.Empty;
-        return JsonConvert.SerializeObject(new NameData { Name = name, HideFcTag = hideFc });
+        if (!plugin.TryGetActiveName(local, out var name, out var hideFc, out var hideName)) return string.Empty;
+        if (string.IsNullOrWhiteSpace(name) && !hideFc && !hideName) return string.Empty;
+        return JsonConvert.SerializeObject(new NameData { Name = name, HideFcTag = hideFc, HideName = hideName });
     }
 
     private string lastReported = string.Empty;

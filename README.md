@@ -1,8 +1,8 @@
 # HMoniker
 
 Change your character's **display name** on its nameplate. Build a name from five
-free-text slots (prefix, first, middle, last, suffix) and optionally hide the free
-company tag.
+free-text slots (prefix, first, middle, last, suffix), optionally hide the free
+company tag, or hide the nameplate name entirely.
 
 Local only: the name you set is visible **only to yourself**, outside of HMS
 (HMapSync) sessions. Inside an HMS session, the courier can carry your chosen name
@@ -16,6 +16,8 @@ Open with `/hmoniker`, then:
 - **Prefix / First / Middle / Last / Suffix** compose the nameplate name. Empty
   slots are skipped.
 - **Hide FC tag** removes the free company tag from your nameplate.
+- **Hide name** blanks the nameplate name entirely. It overrides the slots above, so
+  you can hide your name whether or not you've composed a custom one.
 - **Apply** commits your edits. **Reset** returns the slots to your real name.
 
 ## Installing
@@ -49,7 +51,8 @@ Open with `/hmoniker`, then:
 **Nameplates.** `NameplateService` subscribes to Dalamud's `INamePlateGui`
 `OnNamePlateUpdate`. For each player handler it composes the active name and, when
 one is set, overwrites `handler.Name` (and clears `handler.FreeCompanyTag` when
-Hide FC tag is on).
+Hide FC tag is on). Hide name blanks `handler.Name` outright and takes precedence
+over any composed name.
 
 **Local authority.** Your own nameplate is always driven by your local config,
 never by an incoming IPC assignment, so a courier cannot stomp your own name (even
@@ -58,8 +61,11 @@ world.
 
 **Sync surface.** `IpcProvider` exposes a small Dalamud IPC API so a courier such
 as HMS (HMapSync) can read your chosen name and apply a peer's name on your client.
-For backward compatibility with that contract, the IPC namespace string stays
-`Moniker` even though the plugin is named HMoniker.
+The carried payload includes the Hide FC tag and Hide name flags, so those choices
+follow you to other clients in a session. Hide name is an additive field (IPC 2.2):
+older peers ignore it, and payloads from older senders default it off. For backward
+compatibility with that contract, the IPC namespace string stays `Moniker` even
+though the plugin is named HMoniker.
 
 ## Building
 

@@ -73,10 +73,11 @@ public sealed class Plugin : IDalamudPlugin
     public void RequestNameplateRedraw() => namePlateGui.RequestRedraw();
 
     // IPC-assigned override wins; otherwise the character's own config composes.
-    public bool TryGetActiveName(IPlayerCharacter pc, out string name, out bool hideFcTag)
+    public bool TryGetActiveName(IPlayerCharacter pc, out string name, out bool hideFcTag, out bool hideName)
     {
         name = string.Empty;
         hideFcTag = false;
+        hideName = false;
 
         // The local player's own nameplate is always locally authoritative: driven
         // solely by local config, never by an IPC assignment. This stops any courier
@@ -90,6 +91,7 @@ public sealed class Plugin : IDalamudPlugin
         {
             name = data.Name ?? string.Empty;
             hideFcTag = data.HideFcTag;
+            hideName = data.HideName;
             return true;
         }
 
@@ -99,6 +101,7 @@ public sealed class Plugin : IDalamudPlugin
 
         name = cc.Compose();
         hideFcTag = cc.HideFcTag;
+        hideName = cc.HideName;
         return true;
     }
 
@@ -187,6 +190,7 @@ public sealed class Plugin : IDalamudPlugin
         LastName = c.LastName,
         Suffix = c.Suffix,
         HideFcTag = c.HideFcTag,
+        HideName = c.HideName,
     };
 
     private static void RestoreInto(MonikerCharacterConfig target, MonikerCharacterConfig src)
@@ -197,6 +201,7 @@ public sealed class Plugin : IDalamudPlugin
         target.LastName = src.LastName;
         target.Suffix = src.Suffix;
         target.HideFcTag = src.HideFcTag;
+        target.HideName = src.HideName;
     }
 
     public void Dispose()
