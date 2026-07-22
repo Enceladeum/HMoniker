@@ -67,16 +67,31 @@ public class IpcProvider : IDisposable
                 var local = plugin.Objects.LocalPlayer;
                 if (local != null && pc.EntityId == local.EntityId)
                 {
-                    IpcAssignedNames.Remove(pc.EntityId);
+                    if (IpcAssignedNames.Remove(pc.EntityId)) plugin.RequestNameplateRedraw();
                     plugin.Log.Warning("HMoniker: rejected IPC name targeting the local player (courier index-reuse guard).");
                     return;
                 }
 
-                IpcAssignedNames.Remove(pc.EntityId);
-                if (string.IsNullOrEmpty(json)) return;
+                // Mutating the dictionary does not repaint the plate. OnNamePlateUpdate only
+                // re-runs when the game deems a plate dirty, and a peer's plate is never dirty
+                // from the game's view (its real name is unchanged). So a courier-applied
+                // change, above all a flag-only flip whose text the cache treats as unchanged,
+                // stays invisible until the next organic rebuild. Force the redraw here so a
+                // peer update applies at once, exactly as the local Apply path already does.
+                var hadPrev = IpcAssignedNames.Remove(pc.EntityId);
+                if (string.IsNullOrEmpty(json))
+                {
+                    if (hadPrev) plugin.RequestNameplateRedraw();
+                    return;
+                }
                 var data = JsonConvert.DeserializeObject<NameData>(json);
-                if (data == null) return;
+                if (data == null)
+                {
+                    if (hadPrev) plugin.RequestNameplateRedraw();
+                    return;
+                }
                 IpcAssignedNames[pc.EntityId] = data;
+                plugin.RequestNameplateRedraw();
             }
             catch (Exception ex)
             {
@@ -88,7 +103,10 @@ public class IpcProvider : IDisposable
         clearCharacterName.RegisterAction(index =>
         {
             var obj = index >= 0 && index < plugin.Objects.Length ? plugin.Objects[index] : null;
-            if (obj is IPlayerCharacter pc) IpcAssignedNames.Remove(pc.EntityId);
+            // Redraw on a real removal so the peer's real name / FC tag is restored at once
+            // (an un-hide, or a courier teardown), not on the next organic rebuild.
+            if (obj is IPlayerCharacter pc && IpcAssignedNames.Remove(pc.EntityId))
+                plugin.RequestNameplateRedraw();
         });
 
         // Local-player name set by a cooperating local plugin (e.g. HOutfits applying an
