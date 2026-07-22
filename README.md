@@ -8,13 +8,12 @@ Local only: the name you set is visible **only to yourself**, outside of HMS
 (HMapSync) sessions. Inside an HMS session, the courier can carry your chosen name
 to other clients in that session.
 
-Open with `/hmoniker`, then:
+Open with `/hmoniker`. The window shows the character you're currently logged in as;
+to set up another character, log in to it (its own settings load automatically).
 
-- **Add current character** captures the character you're logged in as. First and
-  last are seeded from your real name; every slot is free text and may be left
-  blank.
-- **Prefix / First / Middle / Last / Suffix** compose the nameplate name. Empty
-  slots are skipped.
+- **Prefix / First / Middle / Last / Suffix** compose the nameplate name. Empty slots
+  are skipped, and the fields wrap onto new lines as you narrow the window. First and
+  last are seeded from your real name; every slot is free text and may be left blank.
 - **Hide FC tag** removes the free company tag from your nameplate.
 - **Hide name** blanks the nameplate name entirely. It overrides the slots above, so
   you can hide your name whether or not you've composed a custom one.
@@ -54,10 +53,13 @@ one is set, overwrites `handler.Name` (and clears `handler.FreeCompanyTag` when
 Hide FC tag is on). Hide name blanks `handler.Name` outright and takes precedence
 over any composed name.
 
-**Local authority.** Your own nameplate is always driven by your local config,
-never by an incoming IPC assignment, so a courier cannot stomp your own name (even
-through a reused object index). Per-character configs are matched by name plus home
-world.
+**Per-character storage.** Each character reads and writes its **own file** under the
+plugin config directory, keyed by name plus home world. Two game clients launched from
+the same XIVLauncher folder no longer share one list or race on a single file, so names
+never bleed between separate accounts. Your own nameplate is always driven by your local
+config, never by an incoming IPC assignment, so a courier cannot stomp your own name
+(even through a reused object index). A pre-1.3 shared list is split into per-character
+files automatically on first load; the old file is left untouched as a backup.
 
 **Sync surface.** `IpcProvider` exposes a small Dalamud IPC API so a courier such
 as HMS (HMapSync) can read your chosen name and apply a peer's name on your client.
@@ -84,11 +86,12 @@ Load `bin/Release/HMoniker.dll` as a dev plugin.
 
 ## Files
 
-- `Plugin.cs`: entry point, DI, window system, `/hmoniker` command, active-name resolution.
+- `Plugin.cs`: entry point, DI, window system, `/hmoniker` command, tracks the logged-in character, active-name resolution.
 - `NameplateService.cs`: the `INamePlateGui` hook that rewrites nameplates.
-- `ConfigWindow.cs`: the slot editor UI.
+- `ConfigWindow.cs`: the single-character slot editor UI.
+- `CharacterStore.cs`: per-character file load/save plus the one-time legacy migration.
 - `MonikerCharacterConfig.cs`: one character's name slots plus `Compose()`.
-- `Configuration.cs`: persisted settings and per-character lookup.
+- `Configuration.cs`: the legacy shared config, kept only as a read-only migration source.
 - `IpcProvider.cs`: the Dalamud IPC surface HMS uses to carry names.
 - `HMoniker.csproj`: project and manifest metadata (no separate `.json`).
 

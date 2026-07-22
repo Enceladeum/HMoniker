@@ -11,21 +11,30 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IDalamudPluginInterface pi;
     private readonly ICommandManager commandManager;
     private readonly INamePlateGui namePlateGui;
+    private readonly IFramework framework;
 
     public IObjectTable Objects { get; }
     public IPluginLog Log { get; }
 
-    public Configuration Config { get; }
     public IpcProvider? Ipc { get; private set; }
 
+    private readonly CharacterStore store;
     private readonly NameplateService nameplateService;
     private readonly WindowSystem windowSystem = new("HMoniker");
     private readonly ConfigWindow configWindow;
 
-    // External local-name override (e.g. HOutfits applying an NPC name). We snapshot
-    // the user's own prior config so a later ClearLocalName is non-destructive.
+    // The one character this client is logged in as: its config, its identity key, and an
+    // epoch bumped whenever either is (re)assigned so the window knows to reload its draft.
+    // Refreshed every frame from the local player; null when not logged in.
+    private MonikerCharacterConfig? current;
+    private string? currentKey;
+    public int CurrentEpoch { get; private set; }
+
+    public MonikerCharacterConfig? CurrentConfig => current;
+
+    // External local-name override (e.g. HOutfits applying an NPC name). We snapshot the
+    // user's own current config so a later ClearLocalName restores it rather than destroying it.
     private MonikerCharacterConfig? extNameBackup;
-    private bool extNameCreatedConfig;
     private bool extNameActive;
 
     private const string CommandName = "/hmoniker";
@@ -35,15 +44,22 @@ public sealed class Plugin : IDalamudPlugin
         ICommandManager commandManager,
         IObjectTable objects,
         INamePlateGui namePlateGui,
+        IFramework framework,
         IPluginLog log)
     {
         this.pi = pi;
         this.commandManager = commandManager;
         this.namePlateGui = namePlateGui;
+        this.framework = framework;
         Objects = objects;
         Log = log;
 
-        Config = pi.GetPluginConfig() as Configuration ?? new Configuration();
+        store = new CharacterStore(pi, log);
+
+        // Split any pre-1.3 shared list into per-character files, once. Read-only on the
+        // shared file: the legacy config is never written back (see CharacterStore).
+        if (pi.GetPluginConfig() is Configuration legacy && legacy.Characters.Count > 0)
+            store.MigrateLegacy(legacy.Characters);
 
         configWindow = new ConfigWindow(this);
         windowSystem.AddWindow(configWindow);
@@ -60,122 +76,154 @@ public sealed class Plugin : IDalamudPlugin
         pi.UiBuilder.OpenConfigUi += ToggleWindow;
         pi.UiBuilder.OpenMainUi += ToggleWindow;
 
+        framework.Update += OnFrameworkUpdate;
+
         Ipc.NotifyReady();
     }
 
     private void OnCommand(string command, string args) => ToggleWindow();
     private void ToggleWindow() => configWindow.Toggle();
 
-    public void SaveConfig() => pi.SavePluginConfig(Config);
+    // Track the logged-in character. When it changes (login, logout, or switching
+    // characters), load that character's own file (or seed a fresh config from the real
+    // name) and drop the previous character's external-override snapshot.
+    private void OnFrameworkUpdate(IFramework _)
+    {
+        var local = Objects.LocalPlayer;
+        if (local == null)
+        {
+            if (currentKey != null)
+            {
+                current = null;
+                currentKey = null;
+                extNameActive = false;
+                extNameBackup = null;
+                CurrentEpoch++;
+            }
+            return;
+        }
 
-    // Force all nameplates to redraw next frame so changes apply instantly instead
-    // of waiting for the game's next organic nameplate update.
+        var name = local.Name.TextValue;
+        var world = local.HomeWorld.ValueNullable?.Name.ToString() ?? string.Empty;
+        var key = CharacterStore.KeyFor(name, world);
+        if (key == currentKey) return;
+
+        currentKey = key;
+        current = store.Load(name, world) ?? SeedFromRealName(name, world);
+        // Stamp the live identity so a save always writes the canonical name@world file
+        // (upgrading the defensive empty-world fallback and any casing drift on first save).
+        current.CharacterName = name;
+        current.World = world;
+        extNameActive = false;
+        extNameBackup = null;
+        CurrentEpoch++;
+        Ipc?.ReportLocalChanged();
+    }
+
+    private static MonikerCharacterConfig SeedFromRealName(string name, string world)
+    {
+        var idx = name.IndexOf(' ');
+        return new MonikerCharacterConfig
+        {
+            CharacterName = name,
+            World = world,
+            FirstName = idx < 0 ? name : name[..idx],
+            LastName = idx < 0 ? string.Empty : name[(idx + 1)..],
+        };
+    }
+
+    public void SaveCurrentConfig()
+    {
+        if (current != null) store.Save(current);
+    }
+
+    // Force all nameplates to redraw next frame so changes apply instantly instead of
+    // waiting for the game's next organic nameplate update.
     public void RequestNameplateRedraw() => namePlateGui.RequestRedraw();
 
-    // IPC-assigned override wins; otherwise the character's own config composes.
+    // Resolve the name to render for a nameplate. Peers are governed only by an explicit
+    // IPC assignment (e.g. an HMS courier); the local player is governed solely by its own
+    // per-character config and never by an incoming IPC assignment, so a courier cannot
+    // stomp the host's own name (even through a reused object index).
     public bool TryGetActiveName(IPlayerCharacter pc, out string name, out bool hideFcTag, out bool hideName)
     {
         name = string.Empty;
         hideFcTag = false;
         hideName = false;
 
-        // The local player's own nameplate is always locally authoritative: driven
-        // solely by local config, never by an IPC assignment. This stops any courier
-        // (e.g. HMS) from stomping the host's own name (including via a reused object
-        // index) and means a stale self-entry is simply ignored here rather than
-        // sticking until a plugin reload.
         var local = Objects.LocalPlayer;
         var isLocal = local != null && pc.EntityId == local.EntityId;
 
-        if (!isLocal && IpcProvider.IpcAssignedNames.TryGetValue(pc.EntityId, out var data))
+        if (!isLocal)
         {
-            name = data.Name ?? string.Empty;
-            hideFcTag = data.HideFcTag;
-            hideName = data.HideName;
-            return true;
+            if (IpcProvider.IpcAssignedNames.TryGetValue(pc.EntityId, out var data))
+            {
+                name = data.Name ?? string.Empty;
+                hideFcTag = data.HideFcTag;
+                hideName = data.HideName;
+                return true;
+            }
+            return false;
         }
 
+        // Local player. Guard against a one-frame stale config during a character switch by
+        // confirming the loaded config still matches who we are.
         var realName = pc.Name.TextValue;
-        var world = pc.HomeWorld.ValueNullable?.Name.ToString() ?? string.Empty;
-        if (!Config.TryGetCharacterConfig(realName, world, out var cc) || cc == null) return false;
+        if (current == null || !string.Equals(current.CharacterName, realName, System.StringComparison.OrdinalIgnoreCase))
+            return false;
 
-        name = cc.Compose();
-        hideFcTag = cc.HideFcTag;
-        hideName = cc.HideName;
+        name = current.Compose();
+        hideFcTag = current.HideFcTag;
+        hideName = current.HideName;
+
+        // Nothing customized (slots blank or still the real name, no hide flags) counts as
+        // no override, so we neither rewrite the plate nor broadcast over IPC.
+        if (!hideFcTag && !hideName && (string.IsNullOrWhiteSpace(name) || name == realName))
+            return false;
+
         return true;
     }
 
-    // Set the LOCAL player's own displayed name via the config path (not the peer-
-    // override dictionary, which the host-invariant guard ignores for the local player).
-    // Used by cooperating local plugins such as HOutfits applying an NPC name. The raw
-    // string is split into slots the SAME way a real name is seeded, so an externally-
-    // applied name and a manually-entered one slot identically. Returns false only if the
-    // local player is unavailable.
+    // Set the LOCAL player's own displayed name via its per-character config (not the peer
+    // dictionary, which the host-invariant guard ignores for the local player). Used by
+    // cooperating local plugins such as HOutfits applying an NPC name. The raw string is
+    // split into slots the same way a real name is seeded, so an externally-applied name and
+    // a manually-entered one slot identically. Returns false only if unavailable.
     public bool SetLocalName(string name)
     {
-        var local = Objects.LocalPlayer;
-        if (local == null) return false;
+        if (Objects.LocalPlayer == null || current == null) return false;
 
-        var realName = local.Name.TextValue;
-        var world = local.HomeWorld.ValueNullable?.Name.ToString() ?? string.Empty;
-
-        if (!Config.TryGetCharacterConfig(realName, world, out var cc) || cc == null)
+        // Snapshot the user's own config once, so a later Clear restores it.
+        if (!extNameActive)
         {
-            cc = new MonikerCharacterConfig { CharacterName = realName, World = world };
-            Config.Characters.Add(cc);
-            if (!extNameActive)
-            {
-                extNameCreatedConfig = true;
-                extNameBackup = null;
-            }
-        }
-        else if (!extNameActive)
-        {
-            // First external override on top of a user's own config: snapshot it so a
-            // later Clear restores the user's name rather than destroying it.
-            extNameCreatedConfig = false;
-            extNameBackup = Clone(cc);
+            extNameBackup = Clone(current);
+            extNameActive = true;
         }
 
         var trimmed = (name ?? string.Empty).Trim();
         var idx = trimmed.IndexOf(' ');
-        cc.Prefix = string.Empty;
-        cc.MiddleName = string.Empty;
-        cc.Suffix = string.Empty;
-        cc.FirstName = idx < 0 ? trimmed : trimmed[..idx];
-        cc.LastName = idx < 0 ? string.Empty : trimmed[(idx + 1)..];
-        // HideFcTag deliberately left untouched: a newly created config defaults to false
-        // (tag shown); an existing config keeps the user's own setting.
+        current.Prefix = string.Empty;
+        current.MiddleName = string.Empty;
+        current.Suffix = string.Empty;
+        current.FirstName = idx < 0 ? trimmed : trimmed[..idx];
+        current.LastName = idx < 0 ? string.Empty : trimmed[(idx + 1)..];
+        // HideFcTag/HideName deliberately left as the user's own setting.
 
-        extNameActive = true;
-        SaveConfig();
+        SaveCurrentConfig();
         Ipc?.ReportLocalChanged();
         RequestNameplateRedraw();
         return true;
     }
 
-    // Revert an external local-name override: restore the user's own prior name, or
-    // remove the entry entirely if the override created it -> back to the real name.
+    // Revert an external local-name override: restore the user's own prior config.
     public void ClearLocalName()
     {
-        var local = Objects.LocalPlayer;
-        if (local != null)
-        {
-            var realName = local.Name.TextValue;
-            var world = local.HomeWorld.ValueNullable?.Name.ToString() ?? string.Empty;
-            if (Config.TryGetCharacterConfig(realName, world, out var cc) && cc != null)
-            {
-                if (extNameCreatedConfig)
-                    Config.Characters.Remove(cc);
-                else if (extNameBackup != null)
-                    RestoreInto(cc, extNameBackup);
-            }
-        }
+        if (current != null && extNameActive && extNameBackup != null)
+            RestoreInto(current, extNameBackup);
 
         extNameActive = false;
-        extNameCreatedConfig = false;
         extNameBackup = null;
-        SaveConfig();
+        SaveCurrentConfig();
         Ipc?.ReportLocalChanged();
         RequestNameplateRedraw();
     }
@@ -206,6 +254,8 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        framework.Update -= OnFrameworkUpdate;
+
         pi.UiBuilder.Draw -= windowSystem.Draw;
         pi.UiBuilder.OpenConfigUi -= ToggleWindow;
         pi.UiBuilder.OpenMainUi -= ToggleWindow;

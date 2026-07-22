@@ -109,7 +109,7 @@ public class IpcProvider : IDisposable
     private string LocalNameJson()
     {
         var local = plugin.Objects.LocalPlayer;
-        if (local == null || !plugin.Config.Enabled) return string.Empty;
+        if (local == null) return string.Empty;
         if (!plugin.TryGetActiveName(local, out var name, out var hideFc, out var hideName)) return string.Empty;
         if (string.IsNullOrWhiteSpace(name) && !hideFc && !hideName) return string.Empty;
         return JsonConvert.SerializeObject(new NameData { Name = name, HideFcTag = hideFc, HideName = hideName });

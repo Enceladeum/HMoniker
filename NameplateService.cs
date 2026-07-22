@@ -19,8 +19,6 @@ public sealed class NameplateService : IDisposable
 
     private void OnNamePlateUpdate(INamePlateUpdateContext context, IReadOnlyList<INamePlateUpdateHandler> handlers)
     {
-        if (!plugin.Config.Enabled) return;
-
         foreach (var handler in handlers)
         {
             if (handler.PlayerCharacter is not { } pc) continue;

@@ -5,130 +5,121 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 
-// Row per selected character: [Prefix] [First] [Middle] [Last] [Suffix] on one line,
-// then [Hide FC tag] [Hide name] toggles below, all free text. Edits are staged in a
-// draft and only take effect on Apply; Reset returns the fields to the real character
-// name. First/Last seeded from the real name.
+// Single-character editor. HMoniker only ever governs the character you are logged in as,
+// so the window shows exactly that character: five free-text slots
+// [Prefix][First][Middle][Last][Suffix] that wrap onto new lines as the window narrows,
+// then [Hide FC tag] and [Hide name]. Edits are staged in a draft and applied on Apply;
+// Reset returns the slots to the real character name. To edit another character, log in to
+// it: its own file loads automatically.
 public sealed class ConfigWindow : Window
 {
     private readonly Plugin plugin;
-    private int selected = -1;
 
-    // Editing buffer for the selected character; committed only on Apply/Reset.
-    private int draftFor = -1;
+    // Editing buffer for the current character; committed only on Apply/Reset. Reloaded
+    // whenever the logged-in character changes (tracked by the plugin's epoch).
+    private int draftEpoch = -1;
     private readonly MonikerCharacterConfig draft = new();
 
     public ConfigWindow(Plugin plugin) : base("HMoniker###HMonikerConfig")
     {
         this.plugin = plugin;
-        Size = new Vector2(780, 300);
+        Size = new Vector2(480, 230);
         SizeCondition = ImGuiCond.FirstUseEver;
+        SizeConstraints = new WindowSizeConstraints
+        {
+            MinimumSize = new Vector2(220, 150),
+            MaximumSize = new Vector2(2000, 2000),
+        };
     }
 
     public override void Draw()
     {
-        var config = plugin.Config;
-
-        if (ImGui.Checkbox("Enabled", ref config.Enabled))
+        var cfg = plugin.CurrentConfig;
+        if (cfg == null)
         {
-            plugin.SaveConfig();
-            plugin.Ipc?.ReportLocalChanged();
-            plugin.RequestNameplateRedraw();
+            ImGui.TextWrapped("Log in to a character to set its display name.");
+            return;
         }
+
+        if (plugin.CurrentEpoch != draftEpoch)
+        {
+            LoadDraft(cfg);
+            draftEpoch = plugin.CurrentEpoch;
+        }
+
+        ImGui.TextWrapped(string.IsNullOrEmpty(cfg.World) ? cfg.CharacterName : $"{cfg.CharacterName}  -  {cfg.World}");
         ImGui.Separator();
-
-        // Left: character list
-        ImGui.BeginChild("##chars", new Vector2(180, 0), true);
-        if (ImGui.Button("Add current character")) AddLocal();
-        ImGui.Separator();
-        for (var i = 0; i < config.Characters.Count; i++)
-        {
-            var c = config.Characters[i];
-            var label = string.IsNullOrEmpty(c.CharacterName) ? "(unnamed)" : c.CharacterName;
-            if (ImGui.Selectable($"{label}##c{i}", selected == i)) selected = i;
-        }
-        ImGui.EndChild();
-
-        ImGui.SameLine();
-
-        // Right: slot editor
-        ImGui.BeginChild("##editor", new Vector2(0, 0), true);
-        if (selected >= 0 && selected < config.Characters.Count)
-            DrawCharacter(config.Characters[selected]);
-        else
-            ImGui.TextDisabled("Add your current character to begin.");
-        ImGui.EndChild();
-    }
-
-    private void DrawCharacter(MonikerCharacterConfig c)
-    {
-        if (draftFor != selected)
-        {
-            LoadDraft(c);
-            draftFor = selected;
-        }
-
-        ImGui.TextDisabled(string.IsNullOrEmpty(c.World) ? c.CharacterName : $"{c.CharacterName}  -  {c.World}");
         ImGui.Spacing();
 
-        // Row 1: [Prefix] [First] [Middle] [Last] [Suffix]
-        ImGui.SetNextItemWidth(68);
-        ImGui.InputTextWithHint("##prefix", "Prefix", ref draft.Prefix, 32);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(100);
-        ImGui.InputTextWithHint("##first", "First name", ref draft.FirstName, 32);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(68);
-        ImGui.InputTextWithHint("##middle", "Middle", ref draft.MiddleName, 32);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(100);
-        ImGui.InputTextWithHint("##last", "Last name", ref draft.LastName, 32);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(68);
-        ImGui.InputTextWithHint("##suffix", "Suffix", ref draft.Suffix, 32);
+        DrawSlotsWrapped();
 
-        // Row 2: toggles. "Hide name" blanks the plate name entirely; it wins over the
-        // slots above, so the preview shows "(hidden)" when it is on.
         ImGui.Spacing();
-        ImGui.Checkbox("Hide FC tag", ref draft.HideFcTag);
-        ImGui.SameLine();
-        ImGui.Checkbox("Hide name", ref draft.HideName);
+        DrawTogglesWrapped();
 
         ImGui.Spacing();
         var composed = draft.Compose();
         var preview = draft.HideName
             ? "(hidden)"
             : string.IsNullOrWhiteSpace(composed) ? "(unchanged)" : composed;
-        ImGui.TextDisabled($"Preview:  {preview}");
+        ImGui.TextWrapped($"Preview:  {preview}");
 
         ImGui.Spacing();
-        if (ImGui.Button("Apply"))
-        {
-            CommitDraft(c);
-            plugin.SaveConfig();
-            plugin.Ipc?.ReportLocalChanged();
-            plugin.RequestNameplateRedraw();
-        }
+        if (ImGui.Button("Apply")) ApplyDraft(cfg);
         ImGui.SameLine();
         if (ImGui.Button("Reset"))
         {
             ResetDraftToRealName();
-            CommitDraft(c);
-            plugin.SaveConfig();
-            plugin.Ipc?.ReportLocalChanged();
-            plugin.RequestNameplateRedraw();
+            ApplyDraft(cfg);
+        }
+    }
+
+    // Lay the five name slots out left to right, dropping to a new line whenever the next
+    // field would run past the window's content edge. This is what makes the row reflow as
+    // the window is narrowed instead of overflowing off the side.
+    private void DrawSlotsWrapped()
+    {
+        var style = ImGui.GetStyle();
+        var visX2 = ImGui.GetWindowPos().X + ImGui.GetWindowContentRegionMax().X;
+
+        void Slot(string id, string hint, ref string val, float w, bool first)
+        {
+            if (!first)
+            {
+                var nextX2 = ImGui.GetItemRectMax().X + style.ItemSpacing.X + w;
+                if (nextX2 < visX2) ImGui.SameLine();
+            }
+            ImGui.SetNextItemWidth(w);
+            ImGui.InputTextWithHint(id, hint, ref val, 32);
         }
 
-        ImGui.Spacing();
-        ImGui.Separator();
-        if (ImGui.Button("Remove character"))
-        {
-            plugin.Config.Characters.RemoveAt(selected);
-            selected = -1;
-            draftFor = -1;
-            plugin.SaveConfig();
-            plugin.RequestNameplateRedraw();
-        }
+        Slot("##prefix", "Prefix", ref draft.Prefix, 68, true);
+        Slot("##first", "First name", ref draft.FirstName, 104, false);
+        Slot("##middle", "Middle", ref draft.MiddleName, 68, false);
+        Slot("##last", "Last name", ref draft.LastName, 104, false);
+        Slot("##suffix", "Suffix", ref draft.Suffix, 68, false);
+    }
+
+    // "Hide name" blanks the plate name entirely and wins over the slots above, so the
+    // preview reads "(hidden)" when it is on. Both toggles wrap the same way the slots do.
+    private void DrawTogglesWrapped()
+    {
+        var style = ImGui.GetStyle();
+        var visX2 = ImGui.GetWindowPos().X + ImGui.GetWindowContentRegionMax().X;
+
+        ImGui.Checkbox("Hide FC tag", ref draft.HideFcTag);
+
+        var nameW = ImGui.GetFrameHeight() + style.ItemInnerSpacing.X + ImGui.CalcTextSize("Hide name").X;
+        var nextX2 = ImGui.GetItemRectMax().X + style.ItemSpacing.X + nameW;
+        if (nextX2 < visX2) ImGui.SameLine();
+        ImGui.Checkbox("Hide name", ref draft.HideName);
+    }
+
+    private void ApplyDraft(MonikerCharacterConfig c)
+    {
+        CommitDraft(c);
+        plugin.SaveCurrentConfig();
+        plugin.Ipc?.ReportLocalChanged();
+        plugin.RequestNameplateRedraw();
     }
 
     private void LoadDraft(MonikerCharacterConfig c)
@@ -166,36 +157,5 @@ public sealed class ConfigWindow : Window
         draft.LastName = idx < 0 ? string.Empty : full[(idx + 1)..];
         draft.HideFcTag = false;
         draft.HideName = false;
-    }
-
-    private void AddLocal()
-    {
-        var lp = plugin.Objects.LocalPlayer;
-        if (lp == null) return;
-
-        var full = lp.Name.TextValue;
-        var world = lp.HomeWorld.ValueNullable?.Name.ToString() ?? string.Empty;
-
-        for (var i = 0; i < plugin.Config.Characters.Count; i++)
-        {
-            if (string.Equals(plugin.Config.Characters[i].CharacterName, full, StringComparison.OrdinalIgnoreCase))
-            {
-                selected = i;
-                draftFor = -1;
-                return;
-            }
-        }
-
-        var idx = full.IndexOf(' ');
-        plugin.Config.Characters.Add(new MonikerCharacterConfig
-        {
-            CharacterName = full,
-            World = world,
-            FirstName = idx < 0 ? full : full[..idx],
-            LastName = idx < 0 ? string.Empty : full[(idx + 1)..],
-        });
-        selected = plugin.Config.Characters.Count - 1;
-        draftFor = -1;
-        plugin.SaveConfig();
     }
 }
